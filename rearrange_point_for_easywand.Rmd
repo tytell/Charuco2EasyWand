@@ -1,0 +1,126 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+library("tidyverse")
+library("plotly")
+library("imager")
+library("here")
+```
+
+```{r}
+detections <- read_csv(here('boards.csv')) |> 
+  select(-`...1`)
+```
+
+```{r}
+camfiles <- here('CalibrationFiles', 'CalibrationVideos', 
+                 c('9.5.22Calib-camA.mp4',
+                   '9.5.22Calib-camB.mp4',
+                   '9.5.22Calib-camC.mp4'))
+```
+
+```{r}
+fps <- 60
+```
+
+NB: imager won't load frames properly if there are any spaces in the path name anywhere
+
+```{r}
+detections |> 
+  filter(camera == cam-1) |> 
+  ggplot(aes(x = x, y = y, color = frame)) +
+  geom_point()
+```
+
+```{r}
+detections |> 
+  group_by(camera) |> 
+  summarize(fr_hi = max(frame, na.rm = TRUE),
+            across(c(x, y), 
+                   list(lo = ~min(.x, na.rm = TRUE), hi = ~max(.x, na.rm = TRUE))))
+            
+```
+
+```{r}
+fr <- 500
+cam <- 3
+
+vidtime <- (fr-1) / fps
+
+I1 <- imager::load.video(camfiles[cam], 
+                         skip.to = vidtime,
+                         frames = 1)
+I1 <- as.data.frame(I1)
+```
+
+
+```{r}
+detections |> 
+  filter(frame == fr-1 & camera == cam-1) |> 
+  ggplot(aes(x = x, y = y)) +
+  geom_raster(data = I1, aes(x = x, y = y, fill = value)) +
+  geom_point(aes(color = factor(id)))
+```
+
+```{r}
+pairs <- list(c(0,1), c(1,2), c(2,3), c(3,4),
+              c(5,6), c(6,7), c(7,8), c(8,9),
+              c(10,11), c(11,12), c(12,13), c(13,14),
+              c(15,16), c(16,17), c(17,18), c(18,19),
+              c(20,21), c(21,22), c(22,23), c(23,24),
+              c(0,5), c(5,10), c(10,15), c(15,20),
+              c(4,9), c(9,14), c(14,19), c(19,24))
+```
+
+```{r}
+mall <- list()
+for (i in seq_along(pairs)) {
+  p1 <- pairs[[i]]
+  
+  a1 <- detections |> filter(id == p1[1]) |> 
+    rename(pt1_X = x, pt1_Y = y)
+  a2 <- detections |> filter(id == p1[2]) |> 
+    rename(pt2_X = x, pt2_Y = y)
+  
+  if (nrow(a1) > 0 & nrow(a2) > 0) {
+    mall[[i]] = left_join(a1, a2, by = c('frame', 'camera')) |> 
+      unite(id, c('id.x', 'id.y'))
+  }
+}
+
+m <- bind_rows(mall)
+```
+
+
+```{r}
+head(m)
+```
+
+```{r}
+ptsforeasywand <-
+  m |> 
+  expand(camera, frame) |> 
+  left_join(m, by = c('camera', 'frame')) |> 
+  na.omit() |> 
+  filter(!str_detect(id, 'NA')) |> 
+  mutate(camera = camera+1) |> 
+  pivot_wider(names_from = camera, values_from = starts_with('pt')) |> 
+  rename_with(~str_replace(.x, '(pt\\d)_([X|Y])_(\\d)', '\\1_cam\\3_\\2')) |>
+  select(pt1_cam1_X, pt1_cam1_Y,
+         pt1_cam2_X, pt1_cam2_Y,
+         pt1_cam3_X, pt1_cam3_Y,
+         pt2_cam1_X, pt2_cam1_Y,
+         pt2_cam2_X, pt2_cam2_Y,
+         pt2_cam3_X, pt2_cam3_Y) |> 
+  na.omit()
+
+head(ptsforeasywand)
+```
+
+```{r}
+write_csv(ptsforeasywand, 'charuco_xypts.csv')
+```
+
